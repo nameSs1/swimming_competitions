@@ -1,12 +1,15 @@
 import xlrd
+import pyodbc
 
-
+# -----------------Excel------------------------------------------------------------------------------------------
 location_excel = 'D:\\for SQL Server\\'
-excel_name = 'excel_person.xls'  # excel_person2.xls или excel_person.xls
+excel_name = 'excel_person2.xls'  # excel_person2.xls или excel_person.xls
 excel_list = '[Лист1$]'  # [ПРОТОКОЛ$] или [Лист1$]
+# -----------------SQL--------------------------------------------------------------------------------------------
 driver_sql = '{SQL Server}'
 server_sql = 'DESKTOP-NE8ID00\\SQLSERVER'
-database_sql = 'swimming_competitions'
+database_sql = 'just_like_others'
+
 ranks = [None, '2юн', '1юн', '3', '2', '1', 'кмс', 'мс', 'мсмк', 'змс']
 nambers_0_to_9 = '1234567890'
 
@@ -75,7 +78,7 @@ def parser_excel_first_type (excel_file):
             competition['gender'] = 'Ж'
         else:
             competition['gender'] = 'М'
-            competition['birth_year_comp'] = int(list_comp[3])
+        competition['birth_year_comp'] = int(list_comp[3])
 
     def parsing_swimmer(string):  # Узнаем информацию о плавце
         name = string[1].split()
@@ -87,17 +90,18 @@ def parser_excel_first_type (excel_file):
         if len(city_club) == 2:
             club = city_club[1].lstrip()
         else:
-            club = None
+            club = city  # если клуба нет, то вместо него город
         time = get_time(string[5])
         rank = rang_pars(string[3])
         new_rank = rang_pars(string[6])
         if ranks.index(rank) < ranks.index(new_rank):
             rank = new_rank
-        keys = ['firstname', 'lastname', 'birth_year', 'rank', 'city', 'club', 'time']
+        keys = ['firstname', 'lastname', 'birth_year', 'rank', 'city', 'club', 'time', 'country']
         if club == 'Латвия':
-            keys[5] = 'country'
-            club = 'LAT'
-        values = (name[1], name[0], year, rank, city, club, time)
+            country = 'LAT'
+        else:
+            country = None
+        values = (name[1], name[0], year, rank, city, club, time, country)
         result = {k: v for k, v in zip(keys, values) if v is not None}
         return result
 
@@ -119,7 +123,6 @@ def parser_excel_first_type (excel_file):
             swimmer.update(competition)
             swimmer.update(event)
             results.append(swimmer)
-
     return results
 
 
@@ -127,7 +130,6 @@ def parser_excel_second_type(excel_file):
     event = dict.fromkeys(['title_event', 'date_event', 'city_event', 'pool'])
     competition = dict.fromkeys(['gender', 'distance', 'style', 'birth_year_comp', 'day_comp'])
     results = []
-
     def parsing_event(string, i):  # Парсинг данных event
         if i == 0:
             event['title_event'] = string[1]
@@ -163,6 +165,8 @@ def parser_excel_second_type(excel_file):
                 distance = [namber for namber in v if namber in nine]
                 competition['distance'] = int(''.join(distance))
                 break
+        if i == 926 and excel_name == 'excel_person2.xls':
+            competition['gender'] = 'М'
         style = []
         if '0' not in string[-2]:
             style.append(string[-2])
@@ -225,3 +229,91 @@ def reading_excel(location_excel, excel_name):
     else:
         str_for_print = "Не подходящий тип экселя. Колличество столбцов: {}. Необходимо 9 или 12".format(count_cols)
         print(str_for_print)
+
+
+def connect_sql_server(driver_sql, server_sql, database_sql):  # Подключается с рерверу, возвращает курсор
+    connection_str_sql_server = "Driver={}; Server={}; Database={};".format(driver_sql, server_sql, database_sql)
+    conn_sql_server = pyodbc.connect(connection_str_sql_server)
+    return conn_sql_server.cursor()
+
+
+def insert_into_tables(results):  # вставляем данные по таблицам
+    def create_string_for_sql(dictionary, table_name):  # Принимает словарь и название таблицы. Формирует сторку для SQL
+        string_one = "insert into [{}] (".format(table_name)  # вставляем название таблицы
+        string_two = ")  values ("
+        keys_and_values = tuple(dictionary.items())  # получаем названия полей и их значения
+        columns = [(str(k[0]) + ",") for k in keys_and_values]  # получаем список полей в виде подстрок
+        columns[-1] = columns[-1].rstrip(',')
+        values = [("'" + str(k[1]) + "',") for k in keys_and_values]  # получаем список значений в виде подстрок
+        values[-1] = values[-1].rstrip(',')  # доробатываем подстроку последнего значения убрав запетую
+        columns = ' '.join(columns)  # обьеденяем подстроки в строки
+        values = ' '.join(values)  # обьеденяем подстроки в строки
+        string_finish = string_one + columns + string_two + values + ")"  # склеиваем в одну строку
+        return string_finish
+
+    def create_string_for_select_id(dictionary, table_name):  # формирует строку для получения id
+        # select table_name + ID from table_name where dictionary
+        str_where = [(str(k) + " = '" + str(dictionary[k]) + "'") for k in dictionary.keys()]  # список для строки where
+        str_where = ' and '.join(str_where)
+        str_select_id = "select [{0}ID] from [{0}] where {1}".format(table_name, str_where)
+        return str_select_id
+
+    def insert_select_id(values, table):  # Вставляем значения в таблицу, получаем значение ID
+        dictionary = {v[0]: v[1] for v in values}
+        insert = create_string_for_sql(dictionary, table)
+        try:
+            cursor.execute(insert)
+        except:
+            select_id = create_string_for_select_id(dictionary, table)
+            cursor.execute(select_id)
+            id = cursor.fetchone()[0]
+        else:
+            cursor.commit()
+            cursor.execute("SELECT SCOPE_IDENTITY() AS ID")
+            id = cursor.fetchone()[0]
+            if table == 'Competition':
+                correct_date_competition(id, result['day_comp'] - 1)  # корректеровка даты соревнований
+        return id
+
+    def correct_date_competition(id, add_days):  # исправляет дату в Competition
+        update_str = "update Competition set Date = DATEADD(day, {}, Date) where CompetitionID = {}" \
+                     "".format(add_days, id)
+        try:
+            cursor.execute(update_str)
+        except:
+            pass
+        else:
+            cursor.commit()
+
+    for result in results:  # Идем по списку результатов
+        pool_columns = (('City', result['city_event']), ('Name', result['title_event']), ('PoolSize', result['pool']))
+        pool_id = insert_select_id(pool_columns, 'Pool')
+        discipline_columns = (('Style', result['style']), ('Distance', result['distance']))
+        discipline_id = insert_select_id(discipline_columns, 'Discipline')
+        group_columns = (('Name', result['birth_year_comp']), ('Gender', result['gender']))
+        group_id = insert_select_id(group_columns, 'Group')
+        competition_columns = (('GroupID', group_id),
+                               ('DisciplineID', discipline_id),
+                               ('PoolID', pool_id),
+                               ('Date', result['date_event']))
+        competition_id = insert_select_id(competition_columns, 'Competition')
+        swimming_club_columns = (('Name', result['club']), ('City', result['city']))
+        swimming_club_id = insert_select_id(swimming_club_columns, 'SwimmingClub')
+        swimmer__columns = (('SwimmingClubID', swimming_club_id),
+                            ('FirstName', result['firstname']),
+                            ('LastName', result['lastname']),
+                            ('YearOfBirth', result['birth_year']),
+                            ('Gender', result['gender']))
+        swimmer_id = insert_select_id(swimmer__columns, 'Swimmer')
+        if 'time' not in result:
+            table = 'Disqualification'
+            columns = (('CompetitionID', competition_id), ('SwimmerID', swimmer_id))
+        else:
+            table = 'Result'
+            columns = (('CompetitionID', competition_id), ('SwimmerID', swimmer_id), ('Time', result['time']))
+        result_id = insert_select_id(columns, table)
+
+
+results = reading_excel(location_excel, excel_name)
+cursor = connect_sql_server(driver_sql, server_sql, database_sql)
+insert_into_tables(results)
