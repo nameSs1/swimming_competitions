@@ -3,7 +3,7 @@ import pyodbc
 
 # -----------------Excel------------------------------------------------------------------------------------------
 location_excel = 'D:\\for SQL Server\\'
-excel_name = 'excel_person2.xls'  # excel_person2.xls или excel_person.xls
+excel_name = 'excel_person.xls'  # excel_person2.xls или excel_person.xls
 excel_list = '[Лист1$]'  # [ПРОТОКОЛ$] или [Лист1$]
 # -----------------SQL--------------------------------------------------------------------------------------------
 driver_sql = '{SQL Server}'
@@ -130,6 +130,7 @@ def parser_excel_second_type(excel_file):
     event = dict.fromkeys(['title_event', 'date_event', 'city_event', 'pool'])
     competition = dict.fromkeys(['gender', 'distance', 'style', 'birth_year_comp', 'day_comp'])
     results = []
+
     def parsing_event(string, i):  # Парсинг данных event
         if i == 0:
             event['title_event'] = string[1]
